@@ -3,7 +3,7 @@ import { Readable } from "stream";
 import Stripe from "stripe";
 import { deflate } from "zlib";
 import { stripe } from "../../services/stripe";
-import { saveSubscription } from "../_lib/manageSubscription";
+import { saveSubscription } from "../api/lib/manageSubscription";
 
 async function buffer(readable: Readable){
     const chunks=[];
@@ -24,7 +24,10 @@ export const config = {
 }
 
 const relevantEvents = new Set([
-    'checkout.session.completed'
+    'checkout.session.completed',
+    'customer.subscriptions.created',
+    'customer.subscriptions.updated',
+    'customer.subscriptions.deleted',
 ])
 
 export default async (req:NextApiRequest, res:NextApiResponse) => {
@@ -35,18 +38,35 @@ export default async (req:NextApiRequest, res:NextApiResponse) => {
         let event: Stripe.Event;
 
         try{
-            event = stripe.webhooks.constructEvent(buf, secret, process.env.STRIPE_WEBHOOK_SECRET)
+            event = stripe.webhooks.constructEvent(buf, secret, process.env.STRIPE_WEBHOOK_SECRET);
         }catch(err){
             return res.status(400).send(`Webhook error: ${err.message}`);
         }
 
         const {type} = event;
 
-        if(!relevantEvents.has(type)){
+        if(relevantEvents.has(type)){
+            console.log('meu evento', type)
             try{
                 switch(type){
+                    case 'customer.subscriptions.created':
+                    case 'customer.subscriptions.updated':
+                    case 'customer.subscriptions.deleted':
+
+                        const subscription = event.data.object as Stripe.Subscription;
+                        console.log('c u d')
+
+                        await saveSubscription(
+                            subscription.id,
+                            subscription.customer.toString(),
+                            type === 'customer.subscriptions.created',
+                        );
+
+                        break;
+
+                        
                     case 'checkout.session.completed':
-                        const checkoutSession = event.data.object as Stripe.Checkout.Session
+                        const checkoutSession = event.data.object as Stripe.Checkout.Session;
 
                         await saveSubscription(
                             checkoutSession.subscription.toString(),
